@@ -1,0 +1,15 @@
+services:
+  app-024:
+    build: .
+    image: app-024-test-21-lantern-riddle:latest
+    container_name: app-024-test-21
+    ports:
+      - "8304:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
