@@ -102,3 +102,9 @@ export async function getKV<T>(key: string): Promise<T | null> {
 export async function setKV<T>(key: string, value: T): Promise<void> {
   await put(STORE_KV, { key, value });
 }
+
+// 仅供单元测试：重置内存降级存储与连接缓存（正常应用不调用）
+export function __resetForTests(): void {
+  mem.clear();
+  dbPromise = null;
+}

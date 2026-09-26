@@ -32,7 +32,7 @@ function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-class AppStore {
+export class AppStore {
   private state: AppState = {
     ready: false,
     riddles: [],
@@ -115,15 +115,22 @@ class AppStore {
     return riddle;
   }
 
-  /** 批量导入（去重后的新增项） */
+  /** 批量导入（去重后的新增项）；自带 no 的保留原号，自动编号跳过已占用号（含本批自带号） */
   async addRiddles(items: (Omit<Riddle, 'id' | 'no' | 'check'> & Partial<Pick<Riddle, 'no'>>)[]): Promise<number> {
     if (!items.length) return 0;
-    let no = this.nextNo();
+    const used = new Set(this.state.riddles.map((r) => r.no));
+    let next = this.nextNo();
+    const allocNo = (explicit?: number): number => {
+      if (explicit !== undefined) { used.add(explicit); return explicit; }
+      while (used.has(next)) next++;
+      used.add(next);
+      return next++;
+    };
     const now = Date.now();
     const riddles: Riddle[] = items.map((it) => ({
       ...it,
       id: uid(),
-      no: it.no ?? no++,
+      no: allocNo(it.no),
       tags: it.tags ?? [],
       difficulty: it.difficulty ?? 2,
       check: { ...validateRiddle(it, this.state.ctx), checkedAt: now },
@@ -211,14 +218,20 @@ class AppStore {
     this.emit();
   }
 
-  /** 兑奖号码生成：按登记时间顺序生成 DJ-xxxx（仅生成号码，不做在线抽奖） */
+  /** 兑奖号码生成：按登记时间顺序生成 DJ-xxxx；只给还没有号码的登记补号，已有号码不动（仅生成号码，不做在线抽奖） */
   async generatePrizeCodes(): Promise<number> {
+    let maxNo = 0;
+    for (const r of this.state.records) {
+      const m = /^DJ-(\d+)$/.exec(r.code ?? '');
+      if (m) maxNo = Math.max(maxNo, parseInt(m[1], 10));
+    }
     let n = 0;
     const sorted = [...this.state.records].sort((a, b) => a.at - b.at);
     for (const r of sorted) {
       if (!r.code) {
         n++;
-        r.code = `DJ-${String(n).padStart(4, '0')}`;
+        maxNo++;
+        r.code = `DJ-${String(maxNo).padStart(4, '0')}`;
         await idb.put(idb.STORE_RECORDS, r);
       }
     }
