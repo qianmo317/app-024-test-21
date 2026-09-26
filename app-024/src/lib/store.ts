@@ -32,7 +32,7 @@ function uid(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-class AppStore {
+export class AppStore {
   private state: AppState = {
     ready: false,
     riddles: [],
@@ -118,16 +118,27 @@ class AppStore {
   /** 批量导入（去重后的新增项） */
   async addRiddles(items: (Omit<Riddle, 'id' | 'no' | 'check'> & Partial<Pick<Riddle, 'no'>>)[]): Promise<number> {
     if (!items.length) return 0;
+    // 自动编号从当前最大谜号 +1 起，并避开本批自带谜号，防止同批撞号
+    const used = new Set(this.state.riddles.map((r) => r.no));
+    for (const it of items) if (it.no != null) used.add(it.no);
     let no = this.nextNo();
     const now = Date.now();
-    const riddles: Riddle[] = items.map((it) => ({
-      ...it,
-      id: uid(),
-      no: it.no ?? no++,
-      tags: it.tags ?? [],
-      difficulty: it.difficulty ?? 2,
-      check: { ...validateRiddle(it, this.state.ctx), checkedAt: now },
-    }));
+    const riddles: Riddle[] = items.map((it) => {
+      let assigned = it.no;
+      if (assigned == null) {
+        while (used.has(no)) no++;
+        assigned = no;
+      }
+      used.add(assigned);
+      return {
+        ...it,
+        id: uid(),
+        no: assigned,
+        tags: it.tags ?? [],
+        difficulty: it.difficulty ?? 2,
+        check: { ...validateRiddle(it, this.state.ctx), checkedAt: now },
+      };
+    });
     this.state.riddles = [...this.state.riddles, ...riddles].sort((a, b) => a.no - b.no);
     await idb.putMany(idb.STORE_RIDDLES, riddles);
     this.emit();
@@ -213,12 +224,18 @@ class AppStore {
 
   /** 兑奖号码生成：按登记时间顺序生成 DJ-xxxx（仅生成号码，不做在线抽奖） */
   async generatePrizeCodes(): Promise<number> {
+    // 从已有最大号码续排：二次生成只补新号，不与旧号重复
+    let max = 0;
+    for (const r of this.state.records) {
+      const m = /^DJ-(\d+)$/.exec(r.code ?? '');
+      if (m) max = Math.max(max, Number(m[1]));
+    }
     let n = 0;
     const sorted = [...this.state.records].sort((a, b) => a.at - b.at);
     for (const r of sorted) {
       if (!r.code) {
         n++;
-        r.code = `DJ-${String(n).padStart(4, '0')}`;
+        r.code = `DJ-${String(max + n).padStart(4, '0')}`;
         await idb.put(idb.STORE_RECORDS, r);
       }
     }
@@ -244,7 +261,7 @@ class AppStore {
       total: this.state.riddles.length,
       solved: solvedSet.size,
       remaining: this.state.riddles.length - solvedSet.size,
-      prizes: this.state.records.filter((r) => r.prize.trim()).length,
+      prizes: this.state.records.filter((r) => (r.prize ?? '').trim()).length,
     };
   }
 
